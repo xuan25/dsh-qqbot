@@ -20,6 +20,7 @@ import {
   type TurnEndEvent,
   type RawSessionEvent,
 } from './events.ts';
+import { isNoReplyReply } from "./no-reply.ts";
 
 export type { QQBotSender } from './outbound-buffer.ts';
 export type { ToolsRegistryLike } from './tool-presenter.ts';
@@ -115,6 +116,13 @@ class OutboundRouter {
   private onMessage(sessionId: string, record: SessionRecord, event: MessageEvent): void {
     const buffer = this.buffers.get(sessionId);
     if (buffer !== undefined && buffer.text.trim()) {
+      // Omitted if buffer contains a NO_REPLY signal. The full buffer is discarded, and no message is sent to the user.
+      if (isNoReplyReply(buffer.text)) {
+        this.logger.debug(`im-qqbot: NO_REPLY suppressed (scope=${record.replyTarget.scope}, path=flush)`);
+        buffer.cancel();
+        this.buffers.delete(sessionId);
+        return;
+      }
       void buffer.flush();
       this.buffers.delete(sessionId);
       return;
@@ -126,6 +134,16 @@ class OutboundRouter {
     }
     const fullText = textParts.join('\n');
     if (!fullText.trim()) return;
+
+    // Omitted if fullText is a NO_REPLY signal. The full buffer is discarded, and no message is sent to the user.
+    if (isNoReplyReply(fullText)) {
+      this.logger.debug(`im-qqbot: NO_REPLY suppressed (scope=${record.replyTarget.scope}, path=onmessage-static)`);
+      const buf = this.buffers.get(sessionId);
+      if (buf)
+          buf.cancel();
+      this.buffers.delete(sessionId);
+      return;
+    }
 
     void this.send(record, fullText, 'sendMarkdown');
     this.buffers.delete(sessionId);
