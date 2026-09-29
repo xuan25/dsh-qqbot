@@ -13,7 +13,6 @@ import {
   contentSanitizer,
   rateLimiter,
   slashCommand,
-  concurrencyGuard,
   typingIndicator,
   quoteRef,
   historyBuffer,
@@ -100,6 +99,11 @@ export function setupMiddlewares(
     strategy: 'merge',
     maxQueue: config.maxQueue,
     maxProcessingMs: config.processingTimeoutMs,
+    urgentPredicate: (ctx) => {
+      const mentioned = ctx.state?.mention?.wasMentioned === true;
+      return mentioned;
+    },
+    urgentStrategy: 'cut-in-with-preview',
   }));
 
   // 10. C2C 输入状态指示

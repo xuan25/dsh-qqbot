@@ -31,6 +31,7 @@ export interface DshAgent {
     readonly events?: readonly SessionEventLike[];
   };
   cancel(cause: { kind: string }): void;
+  steer(message: unknown): void;
   followup(message: unknown): void;
   whenIdle(): Promise<void>;
   /** 运行一个非 turn 维护任务（compact 等需要 idle 时串行执行的操作） */

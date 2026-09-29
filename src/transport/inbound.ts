@@ -104,13 +104,6 @@ export async function handleInbound(
     msgId: msg.messageId,
   };
 
-  // ── 组装 agentBody（下载结果经 mwState.downloadedFiles 提供） ──
-  const agentBody = assembleAgentBody(msg, mwState, scope, logger);
-
-  if (!agentBody) return;
-
-  logger.info(`Processing: scope=${scope} peerId=${peerId} body="${agentBody.slice(0, 200)}"`);
-
   // ── 获取或创建会话 ──
   let record;
   try {
@@ -127,6 +120,19 @@ export async function handleInbound(
   }
 
   // ── 构建 UserMessage → followup ──
+  // ── 路由判定 ──
+  const wasMentioned = mwState.mention?.wasMentioned === true;
+  const agentStatus = record.agent.status;
+  const route = decideRoute(scope, agentStatus, wasMentioned);
+  const omitHistory = route === 'steer'; // steer 时不带历史，followup 时带历史
+
+  // ── 组装 agentBody（下载结果经 mwState.downloadedFiles 提供） ──
+  const agentBody = assembleAgentBody(msg, mwState, scope, omitHistory, logger);
+
+  if (!agentBody) return;
+
+  logger.info(`Processing: scope=${scope} peerId=${peerId} body="${agentBody.slice(0, 200)}"`);
+
   const content: ContentBlock[] = [{ type: 'text' as const, text: agentBody }];
 
   const message = createUserMessage({
@@ -134,8 +140,14 @@ export async function handleInbound(
     source: { kind: 'user' as const },
   });
 
-  record.agent.followup(message);
-  logger.info(`→ followup sent: key=${scope}:${peerId}`);
+  if (route === 'steer') {
+    record.agent.steer(message);
+    logger.info(`→ steer sent: key=${scope}:${peerId}`);
+  }
+  else {
+    record.agent.followup(message);
+    logger.info(`→ followup sent: key=${scope}:${peerId}`);
+  }
 
   // 群消息回复后清空历史缓存（避免下次 @ 时重复组包）
   if (scope === 'group') {
@@ -161,6 +173,7 @@ function assembleAgentBody(
   msg: ProcessedMessage,
   state: MiddlewareState,
   scope: ChatScope,
+  omitHistory: boolean,
   logger: Logger,
 ): string | null {
   const isGroup = scope === 'group';
@@ -176,6 +189,7 @@ function assembleAgentBody(
   const dynamicCtx = buildDynamicCtx(msg, state);
 
   const base = dynamicCtx ? `${dynamicCtx}${userMessage}` : userMessage;
+  if (omitHistory) return base;
   const agentBody = buildAgentBody(base, state.history, isGroup, wasMentioned);
 
   return agentBody;
@@ -432,6 +446,13 @@ function buildAttachmentTags(attachments?: RawAttachment[]): string {
   }
 
   return tags.join(' ');
+}
+
+function decideRoute(scope: 'c2c' | 'group', status: 'idle' | 'running', wasMentioned: boolean): 'steer' | 'followup' {
+  // agent running 中 c2c 或（群内被@）⇒ 即时 steer（next-step）
+  // 其余 ⇒ followup（next-turn）
+  if (status === 'running' && (scope === 'c2c' || wasMentioned)) return 'steer';
+  return 'followup';
 }
 
 function formatFileSize(bytes: number): string {

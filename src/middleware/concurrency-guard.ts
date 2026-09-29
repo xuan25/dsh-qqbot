@@ -1,4 +1,8 @@
 /**
+ * Plugin-local concurrency guard patched from @tencent-connect/qqbot-nodejs
+ * added urgentStrategy option to support cut-in and cut-in-with-preview for urgent messages
+ */
+/**
  * Concurrency-guard middleware — per-target serial message processing.
  *
  * Ensures only one message is being processed at a time for each
@@ -53,6 +57,8 @@ import type { Middleware, MiddlewareContext } from "@tencent-connect/qqbot-nodej
 
 export type ConcurrencyStrategy = "queue" | "drop" | "abort" | "merge";
 
+export type UrgentStrategy = "flush" | "cut-in" | "cut-in-with-preview";
+
 export interface ConcurrencyGuardOptions {
   /**
    * How to handle a new message when the target is busy.
@@ -103,6 +109,14 @@ export interface ConcurrencyGuardOptions {
    * Only meaningful with "merge" strategy.
    */
   urgentPredicate?: (ctx: MiddlewareContext) => boolean;
+  /** 
+   * The strategy to use when an urgent message is received. 
+   * Only meaningful with "merge" strategy.
+   * - "flush":  Drop all buffered messages, proceed with urgent ctx.
+   * - "cut-in": Keep the buffered messages, but let the urgent ctx proceed immediately
+   * - "cut-in-with-preview": Keep the buffered messages, but let the urgent ctx proceed immediately and include a preview of the buffered messages in the urgent ctx's content.
+   */
+  urgentStrategy?: UrgentStrategy;
 }
 
 interface QueueEntry {
@@ -128,6 +142,7 @@ interface TargetState {
 
 export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middleware {
   const strategy = options.strategy ?? "queue";
+  const urgentStrategy = options.urgentStrategy ?? "flush";
   const maxQueue = options.maxQueue ?? 3;
   const { onDrop, onMerge, onDispatch, urgentPredicate, maxProcessingMs } = options;
 
@@ -159,7 +174,7 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
     return `${t.scope}:${t.targetId}`;
   }
 
-  const guard: Middleware = async (ctx, next) => {
+  const guard: Middleware = async (ctx: MiddlewareContext, next: () => Promise<void>) => {
     const key = targetKey(ctx);
     const state = getState(key);
 
@@ -232,15 +247,39 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
           state.mergeWaiters = [];
         }
 
-        // Urgent message: flush buffered waiters, continue remaining chain
-        // immediately via next() in parallel to active owner.
         if (urgentPredicate?.(ctx)) {
-          ctx.log.debug?.(`[concurrency:merge] urgent for ${key}`);
-          for (const w of state.mergeWaiters) w.resolve();
-          state.mergeBuffer.length = 0;
-          state.mergeWaiters.length = 0;
-          await next();
-          return;
+          switch (urgentStrategy) {
+            // Urgent message: flush buffered waiters, continue remaining chain
+            // immediately via next() in parallel to active owner.
+            case "flush": {
+              ctx.log.debug?.(`[concurrency:merge] urgent for ${key}`);
+              for (const w of state.mergeWaiters) w.resolve();
+              state.mergeBuffer.length = 0;
+              state.mergeWaiters.length = 0;
+              await next();
+              return;
+            }
+            // Urgent message: keep buffered waiters, continue remaining chain
+            // immediately via next() in parallel to active owner.
+            case "cut-in": {
+              ctx.log.debug?.(`[concurrency:merge] urgent for ${key}`);
+              await next();
+              return;
+            }
+            // Urgent message: keep buffered waiters, 
+            // patch a preview of the buffered messages into the urgent ctx's content, 
+            // continue remaining chain immediately via next() in parallel to active owner.
+            case "cut-in-with-preview": {
+              ctx.log.debug?.(`[concurrency:merge] urgent for ${key}`);
+              ctx.state._mergePool = { get: () => locks.get(key)?.mergeBuffer?.length ?? 0 };
+              if (state.mergeBuffer.length > 0) {
+                const section = buildMergePreview(state.mergeBuffer);
+                ctx.message.content = ((ctx.message.content ?? "") + "\n\n" + section).trim();
+              }
+              await next();
+              return;
+            }
+          }
         }
 
         if (state.mergeBuffer.length >= maxQueue) {
@@ -444,6 +483,20 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
     }
 
     return first;
+  }
+
+  function buildMergePreview(buffer: MiddlewareContext[]): string {
+    const LINE_CAP = 120, MAX_LINES = 5;
+    const lines = buffer.slice(-MAX_LINES).map((w) => {
+      let s = (w.message.content ?? "").trim() || "(media-only, content omitted)";
+      if (s.length > LINE_CAP) s = s.slice(0, LINE_CAP - 1) + "…";
+      return s;
+    });
+    const omitted = buffer.length - lines.length;
+    const section = ["[previous messages preview]", ...lines, omitted > 0 ? `[+${omitted} more omitted]` : null,
+      "[end of preview]", "full text of the previewed messages arrives in the following turns; re-respond if required."]
+      .filter(Boolean).join("\n");
+    return section;
   }
 
   return guard;
