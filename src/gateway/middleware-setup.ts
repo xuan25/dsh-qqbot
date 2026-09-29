@@ -19,6 +19,7 @@ import {
   historyBuffer,
   envelopeFormatter,
 } from '@tencent-connect/qqbot-nodejs';
+import { concurrencyGuard } from "../middleware/concurrency-guard.ts";
 import type { ImQQBotConfig } from '../config.ts';
 import type { SessionManager } from '../session/index.ts';
 import type { Logger } from '../types.ts';
