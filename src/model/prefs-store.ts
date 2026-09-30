@@ -15,7 +15,7 @@ type DebugFn = (msg: string) => void;
 /** 隔离偏好文件结构 */
 interface PrefsFile {
   overrides: Record<string, ModelRoute>;
-  /** sessionKey → 最新 sessionId（fork 后更新，用于重启后恢复到 fork 后的会话） */
+  /** sessionKey → 最新 sessionId */
   sessionIds: Record<string, string>;
   /** sessionKey → preset id（per-peer preset 覆盖） */
   presets: Record<string, string>;

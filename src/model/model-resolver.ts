@@ -98,14 +98,14 @@ export class ModelResolver {
   }
 
   /**
-   * 获取指定 sessionKey 的最新 sessionId（fork 后记录，重启恢复用）
+   * 获取指定 sessionKey 的最新 sessionId
    */
   getSessionId(sessionKey: string): string | undefined {
     return this.prefs.getSessionId(sessionKey);
   }
 
   /**
-   * 记录指定 sessionKey 的最新 sessionId（fork 后调用）并持久化
+   * 记录指定 sessionKey 的最新 sessionId 并持久化
    */
   setSessionId(sessionKey: string, sessionId: string): void {
     this.prefs.setSessionId(sessionKey, sessionId);

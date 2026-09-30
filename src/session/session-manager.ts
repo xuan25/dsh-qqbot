@@ -12,7 +12,7 @@
  * 支持 agent-presets 系统：通过 setup hook 在 create/resume 时
  * 挂载 preset（工具集、prompt sections 等），实现场景化配置。
  */
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ChatScope, Logger, ReplyTarget } from '../types.ts';
@@ -431,13 +431,8 @@ export class SessionManager {
     return `qqbot:${this.config.appId}:${scope}:${peerId}`;
   }
 
-  private deriveSessionId(sessionKey: string): string {
-    const hash = createHash('sha256').update(sessionKey).digest('hex');
-    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
-  }
-
   private currentSessionId(sessionKey: string): string {
-    return this.modelResolver.getSessionId(sessionKey) ?? this.deriveSessionId(sessionKey);
+    return this.modelResolver.getSessionId(sessionKey) ?? randomUUID();
   }
 
   private async composePreset(presetId?: string): Promise<PresetComposition> {
@@ -477,6 +472,7 @@ export class SessionManager {
       return existing;
     }
 
+    const hadEntry = this.modelResolver.getSessionId(key) !== undefined;
     const route = this.modelResolver.getEffectiveRoute(key);
     const sessionId = SessionId(this.currentSessionId(key));
     this.logger.info(`getOrCreate: key=${key} route=${route ? `${route.provider}/${route.model}` : 'host-default'} sessionId=${sessionId}`);
@@ -535,6 +531,9 @@ export class SessionManager {
     };
 
     this.sessions.set(key, record);
+    if (!hadEntry) {
+      this.modelResolver.setSessionId(key, sessionId);
+    }
     return record;
   }
 
