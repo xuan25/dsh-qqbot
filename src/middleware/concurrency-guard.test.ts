@@ -198,6 +198,55 @@ describe('concurrency-guard merge (defaultMerge)', () => {
   });
 });
 
+// 钉的是 defaultMerge 下的已知死代码分支（部署 wiring 下 @ 消息恒 cut-in、不入缓冲）；wiring 变更时与代码注释同增同删。
+describe('concurrency-guard merge (mention state composition)', () => {
+  /**
+   * 两消息合并（owner A 占锁，B/C 缓冲）→ 返回 survivor B 的 ctx。
+   * mention 参数为 undefined 时不造 mention 对象（生产形态：过 mentionGate 的 ctx 必有该对象）。
+   */
+  async function mergeTwo(
+    scope: 'group' | 'c2c',
+    bMentioned: boolean | undefined,
+    cMentioned: boolean | undefined,
+  ): Promise<MiddlewareContext> {
+    const guard = concurrencyGuard({ strategy: 'merge', maxQueue: 10 });
+    const targetId = scope === 'group' ? 'g1' : 'p1';
+    const owner = makeCtx({ scope, targetId, senderId: 'A000', senderName: 'A', content: 'A msg' });
+    const hold = deferred();
+    const ownerRun = guard(owner, async () => { await hold.promise; });
+
+    const b = makeCtx({ scope, targetId, senderId: 'B000', senderName: 'B', content: 'B msg', ...(bMentioned !== undefined ? { wasMentioned: bMentioned } : {}) });
+    const c = makeCtx({ scope, targetId, senderId: 'C000', senderName: 'C', content: 'C msg', ...(cMentioned !== undefined ? { wasMentioned: cMentioned } : {}) });
+    const bRun = guard(b, vi.fn(async () => {}));
+    const cRun = guard(c, vi.fn(async () => {}));
+
+    await tick();
+    hold.resolve();
+    await Promise.all([ownerRun, bRun, cRun]);
+    return b;
+  }
+
+  it('group: a buffered @ flips the survivor to mentioned (survivor itself not @)', async () => {
+    const survivor = await mergeTwo('group', false, true);
+    expect(survivor.state.mention).toEqual({ wasMentioned: true });
+  });
+
+  it('group: the survivor own @ is preserved (a buffered non-@ does not clear it)', async () => {
+    const survivor = await mergeTwo('group', true, false);
+    expect(survivor.state.mention).toEqual({ wasMentioned: true });
+  });
+
+  it('no @ anywhere in the batch: survivor mention left at its original value (no fabrication)', async () => {
+    const survivor = await mergeTwo('group', false, false);
+    expect(survivor.state.mention).toEqual({ wasMentioned: false });
+  });
+
+  it('defensive: a missing survivor mention object is skipped (no object fabricated)', async () => {
+    const survivor = await mergeTwo('group', undefined, true);
+    expect(survivor.state.mention).toBeUndefined();
+  });
+});
+
 describe('concurrency-guard cut-in-with-preview', () => {
   const urgentOpts = {
     urgentPredicate: (ctx: MiddlewareContext) => ctx.state.mention?.wasMentioned === true,

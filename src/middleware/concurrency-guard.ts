@@ -501,6 +501,14 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
     }
     first.state.contentIsMerged = true;
 
+    // 批内任一条 @ 了 bot 即整批视为被 @ 。
+    // 已知死代码：部署 wiring（urgentPredicate=wasMentioned + cut-in-with-preview）下 @ 消息恒即时 cut-in、从不入 mergeBuffer；
+    // 仅防 wiring 改为 @ 消息也走合并，届时同步处理 concurrency-guard.test.ts 的对应测试钉。
+    const batchMentioned = buffered.some((ctx) => ctx.state.mention?.wasMentioned === true);
+    if (batchMentioned && first.state.mention) {
+      first.state.mention.wasMentioned = true;
+    }
+
     // 非 survivor 消息不会续链到 quoteRef，需在此补写共享 quote store，
     // 否则后续引用这些消息时回查不到 entry、发送人不可解析。
     // entry 形状与 SDK quoteRef record 步骤一致（content 截断 200 字符）。
