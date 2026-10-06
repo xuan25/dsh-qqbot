@@ -1,7 +1,7 @@
 /**
  * 入站处理器 — 经 SDK 中间件链处理后的消息 → dsh Agent followup
  *
- * 内容组装逻辑：
+ * 内容组装逻辑（文本/附件标签等原语在 shared/content-render.ts）：
  * - Layer 1: userContent（文本 + 语音转录）
  * - Layer 2: quotePart（引用消息块）
  * - Layer 3: userMessage（带发送者标签）
@@ -12,15 +12,20 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionManager } from '../session/index.ts';
 import type { ImQQBotConfig } from '../config.ts';
-import type { ChatScope, Logger, QuotedAttachment, RawAttachment, ReplyTarget } from '../types.ts';
+import type { ChatScope, Logger, RawAttachment, ReplyTarget } from '../types.ts';
+import type { DownloadedFile } from './attachment.ts';
+import { clearGroupHistory } from '../features/history-store.ts';
+import { getQuoteStore } from '../features/quote-store.ts';
 import {
+  buildAttachmentTags,
   classifyContentType,
   isVoiceContentType,
-  type DownloadedFile,
+  senderLine,
+  senderTag,
+  textPart,
   type MediaKind,
-} from './attachment.ts';
-import { clearGroupHistory } from '../features/history-store.ts';
-import type { MiddlewareContext } from '@tencent-connect/qqbot-nodejs';
+} from '../shared/index.ts';
+import type { MiddlewareContext, RefEntry, ResolvedQuote } from '@tencent-connect/qqbot-nodejs';
 
 // ── 类型定义 ──
 
@@ -38,12 +43,6 @@ interface ProcessedMessage {
   [key: string]: unknown;
 }
 
-interface ResolvedQuote {
-  text?: string;
-  entry?: { senderId?: string; content?: string };
-  attachments?: QuotedAttachment[];
-}
-
 interface HistoryEntry {
   senderId: string;
   senderName?: string;
@@ -57,6 +56,7 @@ interface MentionState {
 }
 
 interface MiddlewareState {
+  /** 使用 SDK 根导出的 ResolvedQuote（{ refKey, source, entry?, rawContent?, attachments?, text }），不维护本地镜像类型 */
   quote?: ResolvedQuote;
   history?: HistoryEntry[];
   envelope?: string;
@@ -64,6 +64,9 @@ interface MiddlewareState {
   processedAttachments?: ProcessedAttachment[];
   downloadedFiles?: DownloadedFile[];
   downloadedQuoteFiles?: DownloadedFile[];
+  /** content 为 defaultMerge 拼合的逐条渲染（逐条附件标签已内联其中，message.attachments 为拍平全量集合）。
+   * true 时 handleInbound 走 buildMergedUserContent（不渲染块级附件标签）。 */
+  contentIsMerged?: boolean;
   [key: string]: unknown;
 }
 
@@ -127,7 +130,7 @@ export async function handleInbound(
   const omitHistory = route === 'steer'; // steer 时不带历史，followup 时带历史
 
   // ── 组装 agentBody（下载结果经 mwState.downloadedFiles 提供） ──
-  const agentBody = assembleAgentBody(msg, mwState, scope, omitHistory, logger);
+  const agentBody = await assembleAgentBody(msg, mwState, scope, omitHistory, logger);
 
   if (!agentBody) return;
 
@@ -169,21 +172,26 @@ export async function handleInbound(
 /**
  * 组装 agentBody — AI 实际看到的完整上下文
  */
-function assembleAgentBody(
+async function assembleAgentBody(
   msg: ProcessedMessage,
   state: MiddlewareState,
   scope: ChatScope,
   omitHistory: boolean,
   logger: Logger,
-): string | null {
+): Promise<string | null> {
   const isGroup = scope === 'group';
   const wasMentioned = state.mention?.wasMentioned ?? false;
 
-  const userContent = buildUserContent(msg, state, logger);
+  // 合并 survivor 的 content 已含逐条内联渲染，走 buildMergedUserContent（无块级附件标签）
+  const userContent = state.contentIsMerged
+    ? buildMergedUserContent(msg, state, logger)
+    : buildUserContent(msg, state, logger);
 
   if (isEmptyMessage(userContent, msg.attachments, isGroup, wasMentioned)) return null;
 
-  const quotePart = buildQuotePart(state.quote);
+  // 发送人行仅群聊生效：c2c 不解析引用发送人（无发送人行）
+  const quoteSender = isGroup ? await resolveQuoteSender(state.quote) : undefined;
+  const quotePart = buildQuotePart(state.quote, quoteSender);
   const userMessage = buildUserMessage(userContent, quotePart, msg.senderId, msg.senderName, isGroup, wasMentioned);
 
   const dynamicCtx = buildDynamicCtx(msg, state);
@@ -211,43 +219,68 @@ function isEmptyMessage(
   return true;
 }
 
-/**
- * Layer 1: 用户文本内容 + 语音转录 + 附件类型标签（媒体路径由 buildDynamicCtx 提供）
- */
-function buildUserContent(msg: ProcessedMessage, state: MiddlewareState, logger: Logger): string {
+/** Layer 1 共享部分：文本 + 语音行（语音行依赖附件下载后的转写）。
+ *  buildUserContent 与 buildMergedUserContent 共用，保证两形态的顺序（文本 → 语音行）一致。 */
+function userContentParts(
+  msg: ProcessedMessage,
+  state: MiddlewareState,
+  logger: Logger,
+): string[] {
   const parts: string[] = [];
 
-  const text = (msg.content ?? '').trim();
+  const text = textPart(msg);
   if (text) {
     parts.push(text);
   }
 
-  const voiceTexts = extractVoiceTexts(msg.attachments, state.processedAttachments, logger);
-  if (voiceTexts.length > 0) {
-    for (const vt of voiceTexts) {
-      const durationTag = vt.duration ? ` (${vt.duration}s)` : '';
-      parts.push(`[Voice message${durationTag}] ${vt.text}`);
-    }
+  for (const vt of extractVoiceTexts(msg.attachments, state.processedAttachments, logger)) {
+    const durationTag = vt.duration ? ` (${vt.duration}s)` : '';
+    parts.push(`[Voice message${durationTag}] ${vt.text}`);
   }
 
-  // 附件类型标签（媒体路径由 buildDynamicCtx 提供，这里只提示「带了什么」）
+  return parts;
+}
+
+/** 单条消息：文本 + 语音行 + 附件类型标签（媒体路径由 buildDynamicCtx 提供，标签只提示「带了什么」）。 */
+export function buildUserContent(msg: ProcessedMessage, state: MiddlewareState, logger: Logger): string {
+  const parts = userContentParts(msg, state, logger);
   const attachmentTags = buildAttachmentTags(msg.attachments);
   if (attachmentTags) {
     parts.push(attachmentTags);
   }
-
   return parts.join('\n');
 }
 
+/** 合并 survivor：content 已含逐条内联渲染（文本 + 附件标签），
+ *  块级只渲染文本 + 语音行（语音来自附件下载后的转写，对拍平附件集）。 */
+export function buildMergedUserContent(msg: ProcessedMessage, state: MiddlewareState, logger: Logger): string {
+  return userContentParts(msg, state, logger).join('\n');
+}
+
 /**
- * Layer 2: 引用消息块
+ * 解析被引用原消息的发送人：优先取 quote.entry（SDK 解析时直挂），
+ * 否则按 refKey 回查插件共享 quote store（与 quoteRef 写入同一实例），
+ * miss 返回 undefined（不捏造发送人）。导出供单元测试。
  */
-function buildQuotePart(quote?: ResolvedQuote): string {
+export async function resolveQuoteSender(quote?: ResolvedQuote): Promise<RefEntry | undefined> {
+  if (!quote) return undefined;
+  if (quote.entry) return quote.entry;
+  if (!quote.refKey) return undefined;
+  return await getQuoteStore().get(quote.refKey);
+}
+
+/**
+ * Layer 2: 引用消息块（提供 sender 时在引用文本前加一行发送人行）
+ */
+export function buildQuotePart(quote?: ResolvedQuote, sender?: RefEntry): string {
   if (!quote?.text && !quote?.entry?.content) return '';
 
   const quoteText = quote.text || quote.entry?.content || 'Original content unavailable';
+  const senderPart = sender
+    ? `\n[Quoted sender: ${senderTag(sender.senderId, sender.senderName)}]`
+    : '';
 
-  return `[Quoted message begins]\n${quoteText}\n[Quoted message ends]\n[Current message]\n`;
+  return `[Quoted message begins]${senderPart}\n${quoteText}\n[Quoted message ends]\n[Current message]\n`;
 }
 
 /**
@@ -266,9 +299,7 @@ function buildUserMessage(
   }
 
   const mentionTag = wasMentioned ? ' (@you)' : '';
-  const displayName = senderName ?? shortSenderId(senderId);
-  const senderTag = `[${displayName} (${senderId})]`;
-  return `${quotePart}${senderTag} ${userContent}${mentionTag}`;
+  return `${quotePart}${senderLine(senderId, senderName, userContent)}${mentionTag}`;
 }
 
 /**
@@ -363,10 +394,7 @@ function buildAgentBody(
     return base;
   }
 
-  const historyLines = history.map(h => {
-    const name = h.senderName ?? shortSenderId(h.senderId);
-    return `[${name} (${h.senderId})] ${h.content}`;
-  });
+  const historyLines = history.map(h => senderLine(h.senderId, h.senderName, h.content));
 
   return [
     '[Chat history begins]',
@@ -421,33 +449,6 @@ function extractVoiceTexts(
   return results;
 }
 
-/**
- * 附件类型标签（Layer 1 用户消息主体里的轻量提示）。
- * 只标注「带了什么类型的附件」，去重；媒体本地路径在 buildDynamicCtx 提供。
- */
-function buildAttachmentTags(attachments?: RawAttachment[]): string {
-  if (!attachments || attachments.length === 0) return '';
-
-  const labels: Record<string, string> = {
-    image: '[图片]',
-    video: '[视频]',
-    file: '[文件]',
-  };
-
-  const seen = new Set<string>();
-  const tags: string[] = [];
-
-  for (const att of attachments) {
-    const kind = classifyContentType(att.content_type);
-    if (kind === 'voice' || seen.has(kind)) continue;
-    seen.add(kind);
-    const label = labels[kind];
-    if (label) tags.push(label);
-  }
-
-  return tags.join(' ');
-}
-
 function decideRoute(scope: 'c2c' | 'group', status: 'idle' | 'running', wasMentioned: boolean): 'steer' | 'followup' {
   // agent running 中 c2c 或（群内被@）⇒ 即时 steer（next-step）
   // 其余 ⇒ followup（next-turn）
@@ -459,12 +460,4 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
-
-/** 发送者短标识长度（openid 前 N 位，无昵称时兜底） */
-const SENDER_SHORT_ID_LEN = 8;
-
-/** 无昵称时用 openid 前 N 位作为匿名标识 */
-function shortSenderId(senderId: string): string {
-  return senderId.slice(0, SENDER_SHORT_ID_LEN);
 }

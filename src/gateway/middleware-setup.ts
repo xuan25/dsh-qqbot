@@ -26,6 +26,7 @@ import { buildCommandList } from '../commands/index.ts';
 import { attachmentProcessor } from '../middleware/attachment.ts';
 import { questionAnswer } from '../middleware/question-answer.ts';
 import { getHistoryStore, historyGroupKey } from '../features/history-store.ts';
+import { getQuoteStore } from '../features/quote-store.ts';
 
 export function setupMiddlewares(
   bot: QQBot,
@@ -110,8 +111,11 @@ export function setupMiddlewares(
   bot.use(typingIndicator());
 
   // 11. 引用消息解析（记录 + 解析被引用原文）
+  //     store 走插件共享单例（getQuoteStore，见 quote-store.ts）
+  //     preferMsgElements：被引用消息的文本/附件优先取消息内嵌
+  //     msg_elements（内容比 store 记录更完整）
   bot.use(quoteRef({
-    maxSize: 500,
+    store: getQuoteStore(),
     preferMsgElements: true,
   }));
 

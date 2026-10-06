@@ -13,6 +13,7 @@ import * as dns from 'node:dns';
 import type { Logger, RawAttachment } from '../types.ts';
 import type { MediaConfig } from '../config.ts';
 import { MEDIA_ROOT } from '../media/media-cleaner.ts';
+import { classifyContentType } from '../shared/index.ts';
 
 /** 默认富媒体下载大小上限（MB），可被 media.maxMB 覆盖 */
 const DEFAULT_MAX_MB = 200;
@@ -27,32 +28,6 @@ export interface DownloadedFile {
   contentType: 'image' | 'video' | 'file';
   /** 本地绝对路径 */
   localPath: string;
-}
-
-/** 附件归类（QQ 网关的 content_type 是 MIME 类型，如 image/png、video/mp4、audio/silk） */
-export type MediaKind = 'image' | 'video' | 'voice' | 'file';
-
-/** 是否为图片（兼容裸值 'image' 与 MIME 'image/png'） */
-export function isImageContentType(contentType?: string): boolean {
-  return contentType === 'image' || contentType?.startsWith('image/') === true;
-}
-
-/** 是否为视频（兼容裸值 'video' 与 MIME 'video/mp4'） */
-export function isVideoContentType(contentType?: string): boolean {
-  return contentType === 'video' || contentType?.startsWith('video/') === true;
-}
-
-/** 是否为语音（兼容裸值 'voice' 与 MIME 'audio/silk'） */
-export function isVoiceContentType(contentType?: string): boolean {
-  return contentType === 'voice' || contentType?.startsWith('audio/') === true;
-}
-
-/** 归类附件 content_type 为统一类型 */
-export function classifyContentType(contentType?: string): MediaKind {
-  if (isImageContentType(contentType)) return 'image';
-  if (isVideoContentType(contentType)) return 'video';
-  if (isVoiceContentType(contentType)) return 'voice';
-  return 'file';
 }
 
 /** 处理 `//` 开头的协议相对 URL（补 https:） */

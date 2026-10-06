@@ -54,6 +54,8 @@
  */
 
 import type { Middleware, MiddlewareContext } from "@tencent-connect/qqbot-nodejs";
+import { buildContentSkeleton, senderLine } from "../shared/index.ts";
+import { getQuoteStore } from "../features/quote-store.ts";
 
 export type ConcurrencyStrategy = "queue" | "drop" | "abort" | "merge";
 
@@ -462,10 +464,24 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
     const contentBearingCtxs = buffered.filter(
       (ctx) => (ctx.message.content ?? "") !== "",
     );
+    const isGroup = first.message.replyTarget?.scope === "group";
 
-    const contents = contentBearingCtxs.map((ctx) => ctx.message.content as string);
-    if (contents.length > 0) {
-      first.message.content = contents.join("\n");
+    // 逐条渲染 = 该消息单独进来时的 Layer 1 形态：buildContentSkeleton（文本 + 附件类型标签，
+    // 与单条消息同函数）；群聊非 survivor 加发送人前缀，survivor 抬头由 buildUserMessage 统一添加。
+    // 语音行不在此渲染（合并时机无转写数据，survivor 续链后由 buildMergedUserContent 补充）。
+    // 附件同时拍平进 survivor 的 ctx（下游下载 / - Image: 行依赖此列表），
+    // 故标记 state.contentIsMerged：handleInbound 走 buildMergedUserContent（不渲染块级附件标签）。
+    const renderSource = (ctx: MiddlewareContext): string => {
+      const body = buildContentSkeleton(ctx.message);
+      if (!body) return "";
+      return isGroup && ctx !== first
+        ? senderLine(ctx.message.senderId, ctx.message.senderName, body)
+        : body;
+    };
+
+    const renderings = buffered.map(renderSource).filter(Boolean);
+    if (renderings.length > 0) {
+      first.message.content = renderings.join("\n");
     }
 
     const envelopes = contentBearingCtxs
@@ -475,11 +491,35 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
       first.state.envelope = envelopes.join("\n\n");
     }
 
-    const allAttachments = contentBearingCtxs.flatMap(
+    // 附件合并：源集合 = buffered 全量（media-only 消息附件随 survivor 下载，
+    // 与上方逐条内联标签一一对应；c2c merge 分支近乎死路径，同规则）
+    const allAttachments = buffered.flatMap(
       (ctx) => ctx.message.attachments ?? [],
     );
     if (allAttachments.length > 0) {
       first.message.attachments = allAttachments;
+    }
+    first.state.contentIsMerged = true;
+
+    // 非 survivor 消息不会续链到 quoteRef，需在此补写共享 quote store，
+    // 否则后续引用这些消息时回查不到 entry、发送人不可解析。
+    // entry 形状与 SDK quoteRef record 步骤一致（content 截断 200 字符）。
+    // 注：此处依赖 getQuoteStore() 返回同步实现；若未来引入异步 store，
+    // 此调用点须改为 await（届时本函数变 async，drainMergeBuffer 内加 await）。
+    const QUOTE_CONTENT_LIMIT = 200;
+    for (const ctx of buffered) {
+      if (ctx === first) continue; // survivor 续链时会由 quoteRef 正常记录
+      const key = ctx.message.msgIdx ?? ctx.message.messageId;
+      if (!key) continue;
+      void getQuoteStore().set(key, {
+        messageId: ctx.message.messageId,
+        senderId: ctx.message.senderId,
+        senderName: ctx.message.senderName,
+        content: (ctx.message.content ?? "").slice(0, QUOTE_CONTENT_LIMIT),
+        timestamp: ctx.message.timestamp,
+        isBot: ctx.message.senderIsBot,
+        scope: ctx.message.kind,
+      });
     }
 
     return first;
@@ -487,10 +527,15 @@ export function concurrencyGuard(options: ConcurrencyGuardOptions = {}): Middlew
 
   function buildMergePreview(buffer: MiddlewareContext[]): string {
     const LINE_CAP = 120, MAX_LINES = 5;
-    const lines = buffer.slice(-MAX_LINES).map((w) => {
-      let s = (w.message.content ?? "").trim() || "(media-only, content omitted)";
-      if (s.length > LINE_CAP) s = s.slice(0, LINE_CAP - 1) + "…";
-      return s;
+    // buffer 同属一个 key（scope:targetId），scope 整批恒定
+    const isGroup = buffer[0]?.message.replyTarget?.scope === "group";
+    const lines = buffer.slice(-MAX_LINES).map((ctx) => {
+      const text = (ctx.message.content ?? "").trim() || "(media-only, content omitted)";
+      // 群聊先拼发送人前缀、再对整行做 120 字符帽截断
+      const line = isGroup
+        ? senderLine(ctx.message.senderId, ctx.message.senderName, text)
+        : text;
+      return line.length > LINE_CAP ? line.slice(0, LINE_CAP - 1) + "…" : line;
     });
     const omitted = buffer.length - lines.length;
     const section = ["[previous messages preview]", ...lines, omitted > 0 ? `[+${omitted} more omitted]` : null,

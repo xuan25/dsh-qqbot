@@ -64,6 +64,26 @@ export function resolveEnv(configValue: string, envKey: string): string {
 }
 
 /**
+ * 发送人标签：`displayName (openid)`。displayName 为昵称，无昵称（undefined）时
+ * 取 openid 前 8 位作匿名标识。
+ *
+ * senderLine 将本标签套方括号外框；引用发送人行保留自己的
+ * `[Quoted sender: …]` 前缀。标签格式变更时只改这一处。
+ */
+export function senderTag(senderId: string, senderName?: string): string {
+  return `${senderName ?? senderId.slice(0, 8)} (${senderId})`;
+}
+
+/**
+ * 发送人行外框：`[displayName (openid)] line`。
+ * 各提示词位点（用户消息抬头、历史行、合并前缀行、preview 行）
+ * 共用的帧形状在此统一定义；格式变更时只改这一处。
+ */
+export function senderLine(senderId: string, senderName: string | undefined, line: string): string {
+  return `[${senderTag(senderId, senderName)}] ${line}`;
+}
+
+/**
  * 格式化相对时间
  */
 export function formatRelativeTime(ts?: number): string {
