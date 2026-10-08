@@ -65,6 +65,79 @@ describe('ReplyLimiter', () => {
     }
   });
 
+  it('measures the passive window from message arrival (seed), not from the first reply', () => {
+    vi.useFakeTimers();
+    try {
+      const base = new Date('2026-10-08T10:00:00Z').getTime();
+      vi.setSystemTime(base);
+      const limiter = new ReplyLimiter({ limit: 4, scopeTtlMs: { group: 5 * 60_000 } });
+      limiter.seed('g1');
+
+      // 到达后 4 分钟首次回复：距到达 4 min，群窗口（5 min）内
+      vi.setSystemTime(base + 4 * 60_000);
+      expect(limiter.checkLimit('g1', 'group').allowed).toBe(true);
+      limiter.record('g1');
+
+      // 到达后 6 分钟第二次回复：自到达起算已超群窗口
+      // （旧语义自首回复起算仅 2 分钟，会误放行）
+      vi.setSystemTime(base + 6 * 60_000);
+      const expired = limiter.checkLimit('g1', 'group');
+      expect(expired.allowed).toBe(false);
+      expect(expired.fallbackReason).toBe('expired');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('expires an arrival-seeded message even if never replied to', () => {
+    vi.useFakeTimers();
+    try {
+      const base = new Date('2026-10-08T10:00:00Z').getTime();
+      vi.setSystemTime(base);
+      const limiter = new ReplyLimiter({ limit: 4, scopeTtlMs: { group: 5 * 60_000 } });
+      limiter.seed('g1');
+
+      // 到达后 6 分钟（未回复过）：窗口自到达起算，已过期
+      vi.setSystemTime(base + 6 * 60_000);
+      const expired = limiter.checkLimit('g1', 'group');
+      expect(expired.allowed).toBe(false);
+      expect(expired.fallbackReason).toBe('expired');
+
+      // 过期记录被删除：再次检查按未登记消息放行（锚点已死，由发送层 fallback 兜底）
+      expect(limiter.checkLimit('g1', 'group').allowed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('seed is idempotent and does not overwrite an existing entry', () => {
+    vi.useFakeTimers();
+    try {
+      const base = new Date('2026-10-08T10:00:00Z').getTime();
+      vi.setSystemTime(base);
+      const limiter = new ReplyLimiter({ limit: 4, ttlMs: 30_000 });
+      limiter.record('m1'); // 未登记 id 建账于 base
+      limiter.seed('m1', base - 30_000); // 重复登记不得覆盖 firstSeenAt
+
+      // 仍以建账时刻 base 起算（20s < 30s 窗口）→ 放行
+      vi.setSystemTime(base + 20_000);
+      expect(limiter.checkLimit('m1').allowed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies the per-scope limit to arrival-seeded messages', () => {
+    const limiter = new ReplyLimiter({ limit: 4, scopeLimit: { group: 5 } });
+    limiter.seed('g1');
+
+    for (let i = 0; i < 5; i += 1) {
+      expect(limiter.checkLimit('g1', 'group').allowed).toBe(true);
+      limiter.record('g1');
+    }
+    expect(limiter.checkLimit('g1', 'group').fallbackReason).toBe('limit_exceeded');
+  });
+
   it('resolves ttl with priority scopeTtlMs > ttlMs > default', () => {
     vi.useFakeTimers();
     try {

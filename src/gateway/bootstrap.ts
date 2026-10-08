@@ -64,11 +64,20 @@ export async function bootstrapGateway(
   // ── 中间件链 ──
   setupMiddlewares(bot, config, manager, logger);
 
+  // ── 被动回复限额：消息入站即登记，过期窗口自到达时刻起算，与平台窗口同锚 ──
+  // 被动回复窗口（QQ 开放平台「消息收发概述」）：单聊 60 分钟 / 群聊 5 分钟。
+  const replyLimiter = new ReplyLimiter({
+    limit: 4,
+    scopeTtlMs: { c2c: 60 * 60_000, group: 5 * 60_000 },
+  });
+
   // ── 入站：经过中间件链后的消息交给 dsh agent ──
   bot.on('message', async (mCtx: MiddlewareContext) => {
     const msg = mCtx.message;
     // 记录最近 msgId，供无上下文的出站发送（文件发送显式 target、主动推送等）获取被动回复目标
     cacheMsgId(mCtx.replyTarget.scope, mCtx.replyTarget.targetId, mCtx.replyTarget.msgId);
+    // 入站即向 limiter 登记：被动回复窗口自消息到达起算
+    if (mCtx.replyTarget.msgId) replyLimiter.seed(mCtx.replyTarget.msgId);
     if (config.debug) {
       logger.debug(`← message (post-middleware): ${JSON.stringify(msg, null, 2).slice(0, 500)}`);
     }
@@ -87,11 +96,6 @@ export async function bootstrapGateway(
   // 发送适配器：将 QQBot 实例适配为 QQBotSender（openStream 参数形态不同）。
   // sendMarkdown 统一做被动回复限额管控：同一 msgId 超限/过期时降级主动推送；
   // 平台拒绝被动锚点（过期/超限）时再按主动消息重发一次，避免回复丢失。
-  // 被动回复窗口（QQ 开放平台「消息收发概述」）：单聊 60 分钟 / 群聊 5 分钟。
-  const replyLimiter = new ReplyLimiter({
-    limit: 4,
-    scopeTtlMs: { c2c: 60 * 60_000, group: 5 * 60_000 },
-  });
   const sender: QQBotSender = {
     sendMarkdown: (target, content, opts) => sendMarkdownWithFallback(bot, target, replyLimiter, content, opts, logger),
     openStream: (target) => bot.openStream({
