@@ -23,8 +23,8 @@ interface CachedEntry {
 }
 
 const MAX_PER_TARGET = 10;
-const TTL_GROUP = 5 * 60 * 1000; // 群消息被动回复窗口 5 分钟
-const TTL_C2C = 30 * 60 * 1000; // 私聊 30 分钟
+const TTL_GROUP = 5 * 60 * 1000; // 群消息被动回复窗口 5 分钟（QQ 开放平台「消息收发概述」）
+const TTL_C2C = 60 * 60 * 1000; // 私聊消息被动回复窗口 60 分钟（QQ 开放平台「消息收发概述」）
 const MAX_TARGETS = 200;
 const EVENT_PREFIX = 'INTERACTION_CREATE:';
 

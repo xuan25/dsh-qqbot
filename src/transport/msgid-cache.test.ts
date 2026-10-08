@@ -52,4 +52,15 @@ describe('msgid-cache', () => {
     vi.advanceTimersByTime(5 * 60 * 1000 + 1);
     expect(getCachedReplyIds('group', 'g-cache-1')).toEqual([]);
   });
+
+  it('keeps c2c msgIds usable up to the 60 minute platform window', () => {
+    vi.useFakeTimers();
+    cacheMsgId('c2c', 'u-cache-6', 'mc1');
+    // 45 分钟：旧 30 分钟 TTL 下已被过滤，平台 60 分钟窗口内仍应可用
+    vi.advanceTimersByTime(45 * 60 * 1000);
+    expect(getCachedReplyIds('c2c', 'u-cache-6')).toEqual([{ kind: 'msg', id: 'mc1' }]);
+    // 61 分钟：超出平台窗口，过期
+    vi.advanceTimersByTime(16 * 60 * 1000 + 1);
+    expect(getCachedReplyIds('c2c', 'u-cache-6')).toEqual([]);
+  });
 });
