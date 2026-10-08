@@ -11,7 +11,7 @@ import { SessionManager, type DshAgentRegistry } from '../session/index.ts';
 import { handleInbound, createOutboundHandler } from '../transport/index.ts';
 import { ReplyLimiter } from '../transport/reply-limiter.ts';
 import { cacheMsgId, cacheEventId } from '../transport/msgid-cache.ts';
-import { resolveReplyTarget, sendResolvedMarkdown } from '../transport/reply-target.ts';
+import { resolveReplyTarget, sendMarkdownWithFallback } from '../transport/reply-target.ts';
 import type { ToolsRegistryLike } from '../transport/tool-presenter.ts';
 import type { QQBotSender } from '../transport/outbound-buffer.ts';
 import { QuestionChannel } from '../features/question-channel.ts';
@@ -85,10 +85,15 @@ export async function bootstrapGateway(
   }
 
   // 发送适配器：将 QQBot 实例适配为 QQBotSender（openStream 参数形态不同）。
-  // sendMarkdown 统一做被动回复限额管控：同一 msgId 超限/过期时降级主动推送。
-  const replyLimiter = new ReplyLimiter({ limit: 4 });
+  // sendMarkdown 统一做被动回复限额管控：同一 msgId 超限/过期时降级主动推送；
+  // 平台拒绝被动锚点（过期/超限）时再按主动消息重发一次，避免回复丢失。
+  // 被动回复窗口（QQ 开放平台「消息收发概述」）：单聊 60 分钟 / 群聊 5 分钟。
+  const replyLimiter = new ReplyLimiter({
+    limit: 4,
+    scopeTtlMs: { c2c: 60 * 60_000, group: 5 * 60_000 },
+  });
   const sender: QQBotSender = {
-    sendMarkdown: (target, content, opts) => sendResolvedMarkdown(bot, resolveReplyTarget(target, replyLimiter, true), content, opts),
+    sendMarkdown: (target, content, opts) => sendMarkdownWithFallback(bot, target, replyLimiter, content, opts, logger),
     openStream: (target) => bot.openStream({
       target: {
         scope: target.scope,
