@@ -12,7 +12,7 @@
 import type { ChatScope } from '../types.ts';
 
 export interface ReplyLimiterConfig {
-  /** 每条消息最大被动回复次数（默认 4，留 1 次余量）；scopeLimit 中对应 scope 的值优先 */
+  /** 每条消息最大被动回复次数（默认 4，供平台上限未公布的 scope 兜底，如频道）；scopeLimit 中对应 scope 的值优先 */
   limit?: number;
   /** 消息 ID 全局过期时间 ms（默认 1 小时）；scopeTtlMs 中对应 scope 的值优先 */
   ttlMs?: number;

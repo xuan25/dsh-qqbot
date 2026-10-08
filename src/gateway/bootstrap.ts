@@ -65,9 +65,14 @@ export async function bootstrapGateway(
   setupMiddlewares(bot, config, manager, logger);
 
   // ── 被动回复限额：消息入站即登记，过期窗口自到达时刻起算，与平台窗口同锚 ──
-  // 被动回复窗口（QQ 开放平台「消息收发概述」）：单聊 60 分钟 / 群聊 5 分钟。
+  // 平台被动消息规则（QQ 开放平台「消息收发概述」，频率与时效规则）：
+  //   单聊：有效期 60 分钟，每条消息最多回复 4 次
+  //   群聊：有效期 5 分钟，每条消息最多回复 5 次
+  //   频道：有效期 5 分钟，次数未公布（走全局 limit 兜底）
+  // 计数分歧（如重启残留锚点）导致的平台拒绝由出站适配器反应式重发兜底。
   const replyLimiter = new ReplyLimiter({
     limit: 4,
+    scopeLimit: { c2c: 4, group: 5 },
     scopeTtlMs: { c2c: 60 * 60_000, group: 5 * 60_000 },
   });
 
