@@ -22,9 +22,9 @@ export type { ImQQBotConfig } from './config.ts';
 // ── 插件主体 ──
 export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> {
   const agents = (ctx as unknown as Record<string, unknown>).agents as DshAgentRegistry;
-  const logger: Logger = ((ctx as unknown as Record<string, unknown>).logger as Logger) ?? console;
+  const logger: Logger = (ctx as unknown as Record<string, unknown>).logger as Logger;
 
-  console.log('[im-qqbot] apply() called');
+  logger.info('[im-qqbot] apply() called');
 
   let appId = resolveEnv(config.appId, 'QQBOT_APPID');
   let appSecret = resolveEnv(config.appSecret, 'QQBOT_SECRET');

@@ -35,12 +35,12 @@ function clickableLink(url: string): string {
  * 供二维码因系统字符问题渲染错位时点击/复制到浏览器打开扫码。
  */
 export async function runQrSetup(source = 'dsh-qqbot'): Promise<SetupCredentials | null> {
-  console.log('\n══════════════════════════════════════════════════════');
-  console.log('  QQ Bot 凭据未配置，启动扫码绑定');
-  console.log('══════════════════════════════════════════════════════\n');
+  console.error('\n══════════════════════════════════════════════════════');
+  console.error('  QQ Bot 凭据未配置，启动扫码绑定');
+  console.error('══════════════════════════════════════════════════════\n');
 
   try {
-    console.log('请使用手机 QQ 扫描下方二维码完成绑定...\n');
+    console.error('请使用手机 QQ 扫描下方二维码完成绑定...\n');
 
     // 回调风格：onQrDisplayed 会在二维码打印后、轮询开始前回调扫码 URL，
     // 让用户在二维码错位时也能通过链接打开扫码页（二维码过期刷新会再次触发）。
@@ -50,11 +50,11 @@ export async function runQrSetup(source = 'dsh-qqbot'): Promise<SetupCredentials
           onSuccess: resolve,
           onFailure: reject,
           onQrDisplayed: (url) => {
-            console.log('二维码显示异常？点击下方链接，用浏览器打开即可完成扫码:');
-            console.log(`  ${clickableLink(url)}\n`);
+            console.error('二维码显示异常？点击下方链接，用浏览器打开即可完成扫码:');
+            console.error(`  ${clickableLink(url)}\n`);
           },
           onQrExpired: () => {
-            console.log('二维码已过期，正在刷新…\n');
+            console.error('二维码已过期，正在刷新…\n');
           },
         },
         { source },
@@ -71,7 +71,7 @@ export async function runQrSetup(source = 'dsh-qqbot'): Promise<SetupCredentials
       console.error('[im-qqbot] 扫码未返回有效凭据');
       return null;
     }
-    console.log(`\n✔ 绑定成功！AppID: ${cred.appId}\n`);
+    console.error(`\n✔ 绑定成功！AppID: ${cred.appId}\n`);
 
     return {
       appId: cred.appId,
@@ -180,26 +180,26 @@ function parsePatchEntries(content: string): PatchEntry[] {
   );
 }
 
-/** 开发模式引导：未定位到 profile 目录，引导用环境变量配置（console.log 确保可见） */
+/** 开发模式引导：未定位到 profile 目录，引导用环境变量配置 */
 function printEnvInstructions(credentials: SetupCredentials): void {
-  console.log('未检测到 profile 目录（开发模式），请通过环境变量配置凭据:');
+  console.error('未检测到 profile 目录（开发模式），请通过环境变量配置凭据:');
   if (process.platform === 'win32') {
     // Windows CMD 语法（PowerShell 请用 $env:QQBOT_APPID="xxx"）
-    console.log(`  set QQBOT_APPID=${credentials.appId}`);
-    console.log(`  set QQBOT_SECRET=${credentials.appSecret}`);
+    console.error(`  set QQBOT_APPID=${credentials.appId}`);
+    console.error(`  set QQBOT_SECRET=${credentials.appSecret}`);
   } else {
-    console.log(`  export QQBOT_APPID="${credentials.appId}"`);
-    console.log(`  export QQBOT_SECRET="${credentials.appSecret}"`);
+    console.error(`  export QQBOT_APPID="${credentials.appId}"`);
+    console.error(`  export QQBOT_SECRET="${credentials.appSecret}"`);
   }
 }
 
-/** 正式安装引导：自动写入失败，引导手动在 cordis.patch.yml 配置（console.log 确保可见） */
+/** 正式安装引导：自动写入失败，引导手动在 cordis.patch.yml 配置 */
 function printYamlInstructions(credentials: SetupCredentials, patchPath: string): void {
-  console.log('无法自动保存凭据，请手动打开以下文件添加配置:');
-  console.log(`  ${patchPath}`);
-  console.log('');
-  console.log('  - id: im-qqbot');
-  console.log('    config:');
-  console.log(`      appId: "${credentials.appId}"`);
-  console.log(`      appSecret: "${credentials.appSecret}"`);
+  console.error('无法自动保存凭据，请手动打开以下文件添加配置:');
+  console.error(`  ${patchPath}`);
+  console.error('');
+  console.error('  - id: im-qqbot');
+  console.error('    config:');
+  console.error(`      appId: "${credentials.appId}"`);
+  console.error(`      appSecret: "${credentials.appSecret}"`);
 }
