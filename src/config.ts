@@ -82,8 +82,10 @@ export interface ImQQBotConfig {
   historyLimit: number;
   /** 访问控制 */
   access: AccessControlConfig;
-  /** 是否展示工具调用成功结果（工具错误始终展示） */
+  /** 是否展示工具调用成功结果 */
   showToolResults: boolean;
+  /** 是否展示工具调用失败结果 */
+  showToolErrors: boolean;
   /** 调试模式 */
   debug: boolean;
   /** 富媒体理解（图片/视频） */
@@ -122,7 +124,8 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
     groupMode: 'open',
     groupAllow: [],
   }).description('访问控制'),
-  showToolResults: Schema.boolean().default(false).description('是否展示工具调用成功结果（错误始终展示）'),
+  showToolResults: Schema.boolean().default(false).description('是否展示工具调用成功结果'),
+  showToolErrors: Schema.boolean().default(true).description('是否展示工具调用失败结果'),
   debug: Schema.boolean().default(false),
   media: Schema.object({
     enabled: Schema.boolean().default(true).description('是否启用富媒体理解（图片/视频下载 + 工具分析）'),

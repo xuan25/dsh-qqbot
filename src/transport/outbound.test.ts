@@ -40,6 +40,7 @@ function createConfig(overrides?: Partial<ImQQBotConfig>): ImQQBotConfig {
     streaming: true,
     textChunkLimit: 4500,
     showToolResults: false,
+    showToolErrors: true,
     ...overrides,
   } as unknown as ImQQBotConfig;
 }
@@ -180,5 +181,79 @@ describe('OutboundRouter.routeStreamFrame', () => {
 
     expect(bot.openStream).toHaveBeenCalledTimes(1);
     expect(session.update).toHaveBeenCalledWith('legacy');
+  });
+});
+
+describe('OutboundRouter tool/result 门禁', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const toolCallEvent = (callId: string): { type: string; data: Record<string, unknown> } => ({
+    type: 'tool/call',
+    data: { callId, name: 'bash', arguments: '{}' },
+  });
+
+  const toolErrorEvent = (callId: string): { type: string; data: Record<string, unknown> } => ({
+    type: 'tool/result',
+    data: { message: { source: { callId } }, error: { name: 'Error', code: 'FAILED' } },
+  });
+
+  const toolSuccessEvent = (callId: string, text: string): { type: string; data: Record<string, unknown> } => ({
+    type: 'tool/result',
+    data: { message: { source: { callId }, content: [{ type: 'tool-result', content: [{ type: 'text', text }] }] } },
+  });
+
+  it('showToolErrors=true 展示失败结果', async () => {
+    const { outbound, bot } = setup();
+
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolCallEvent('c1'));
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolErrorEvent('c1'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(bot.sendMarkdown).toHaveBeenCalledWith(c2cTarget, expect.stringContaining('执行失败'));
+  });
+
+  it('showToolErrors=false 抑制失败结果', async () => {
+    const { outbound, bot } = setup({ config: createConfig({ showToolErrors: false }) });
+
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolCallEvent('c1'));
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolErrorEvent('c1'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(bot.sendMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('showToolResults=false 抑制成功结果', async () => {
+    const { outbound, bot } = setup();
+
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolCallEvent('c1'));
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolSuccessEvent('c1', 'ok'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(bot.sendMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('showToolResults=true 展示成功结果', async () => {
+    const { outbound, bot } = setup({ config: createConfig({ showToolResults: true }) });
+
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolCallEvent('c1'));
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolSuccessEvent('c1', 'ok'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(bot.sendMarkdown).toHaveBeenCalledWith(c2cTarget, expect.stringContaining('完成'));
+  });
+
+  it('未注册的 callId（无对应 tool/call）不发结果', async () => {
+    const { outbound, bot } = setup();
+
+    outbound.routeSessionEvent({ header: { id: 'sess-qq' } }, toolErrorEvent('c-orphan'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(bot.sendMarkdown).not.toHaveBeenCalled();
   });
 });

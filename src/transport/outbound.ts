@@ -203,13 +203,14 @@ class OutboundRouter {
     this.toolCalls.set(event.callId, { name: event.name, args: event.arguments });
   }
 
-  /** 工具结果：错误始终发送，成功结果按开关 */
+  /** 工具结果：失败结果按 showToolErrors 开关，成功结果按 showToolResults 开关 */
   private onToolResult(record: SessionRecord, event: ToolResultEvent): void {
     const call = this.toolCalls.get(event.callId);
     this.toolCalls.delete(event.callId);
     if (call === undefined) return;
 
-    if (event.error === undefined && !this.config.showToolResults) return;
+    const isError = event.error !== undefined;
+    if (isError ? !this.config.showToolErrors : !this.config.showToolResults) return;
 
     const text = formatToolResult(
       call.name,

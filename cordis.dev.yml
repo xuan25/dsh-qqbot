@@ -33,4 +33,5 @@
         textChunkLimit: 4500
         sessionIdleTimeout: 1800000
         showToolResults: false
+        showToolErrors: true
         debug: true

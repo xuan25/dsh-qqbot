@@ -2,7 +2,7 @@
  * 工具调用结果 → Markdown 格式化
  *
  * 适配 QQ 消息通道：优先用工具自定义的 presentResult 视图，
- * fallback 到 raw text。错误始终展示，成功结果按 config 开关。
+ * fallback 到 raw text。展示与否由 outbound 按 showToolErrors / showToolResults 开关门禁。
  */
 
 /** dsh-tools 主机平面注册表（presentResult 能力） */
@@ -43,7 +43,7 @@ export function formatToolResult(
   toolsRegistry: ToolsRegistryLike | undefined,
   agent: unknown,
 ): string | null {
-  // 1. 错误优先：始终展示
+  // 1. 错误优先：渲染失败形态（是否展示由 outbound 按 showToolErrors 门禁）
   if (data.error) {
     return `❌ 工具 \`${name}\` 执行失败\n\`${data.error.name}: ${data.error.code}\``;
   }

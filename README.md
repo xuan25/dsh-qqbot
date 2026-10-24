@@ -93,7 +93,8 @@ npx @deepseek-ai/dsh web --patch /path/to/dsh-qqbot/cordis.dev.yml
 | `maxQueue` | number | `20` | 并发队列最大长度 |
 | `historyLimit` | number | `10` | 群历史缓冲条数 |
 | `askTimeoutMs` | number | `300000` | 待答问题超时(ms)，默认 5 分钟（ask_user_question） |
-| `showToolResults` | boolean | `false` | 是否展示工具调用成功结果（错误始终展示） |
+| `showToolResults` | boolean | `false` | 是否展示工具调用成功结果 |
+| `showToolErrors` | boolean | `true` | 是否展示工具调用失败结果 |
 | `debug` | boolean | `false` | 调试模式 |
 
 ### 访问控制（access）

@@ -93,7 +93,8 @@ npx @deepseek-ai/dsh web --patch /path/to/dsh-qqbot/cordis.dev.yml
 | `maxQueue` | number | `20` | Max concurrent queue length |
 | `historyLimit` | number | `10` | Group history buffer size |
 | `askTimeoutMs` | number | `300000` | Question timeout (ms), default 5 min (ask_user_question) |
-| `showToolResults` | boolean | `false` | Show successful tool-call results (errors always shown) |
+| `showToolResults` | boolean | `false` | Show successful tool-call results |
+| `showToolErrors` | boolean | `true` | Show failed tool-call results |
 | `debug` | boolean | `false` | Debug mode |
 
 ### Access control (access)
